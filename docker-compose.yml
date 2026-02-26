@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: devpulse-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-devpulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpulse123}
+      POSTGRES_DB: ${POSTGRES_DB:-devpulse}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devpulse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - devpulse-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: devpulse-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - devpulse-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: devpulse-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-devpulse}:${POSTGRES_PASSWORD:-devpulse123}@postgres:5432/${POSTGRES_DB:-devpulse}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      EXTERNAL_API_GITHUB_TOKEN: ${EXTERNAL_API_GITHUB_TOKEN:-}
+      EXTERNAL_API_GITLAB_TOKEN: ${EXTERNAL_API_GITLAB_TOKEN:-}
+      EXTERNAL_API_JIRA_TOKEN: ${EXTERNAL_API_JIRA_TOKEN:-}
+      EXTERNAL_API_JIRA_URL: ${EXTERNAL_API_JIRA_URL:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://frontend:3000}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - devpulse-network
+
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: devpulse-celery
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-devpulse}:${POSTGRES_PASSWORD:-devpulse123}@postgres:5432/${POSTGRES_DB:-devpulse}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      EXTERNAL_API_GITHUB_TOKEN: ${EXTERNAL_API_GITHUB_TOKEN:-}
+      EXTERNAL_API_GITLAB_TOKEN: ${EXTERNAL_API_GITLAB_TOKEN:-}
+      EXTERNAL_API_JIRA_TOKEN: ${EXTERNAL_API_JIRA_TOKEN:-}
+      EXTERNAL_API_JIRA_URL: ${EXTERNAL_API_JIRA_URL:-}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    command: celery -A app.celery_app.celery_app worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    networks:
+      - devpulse-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: devpulse-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    environment:
+      REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:8000}
+      REACT_APP_ENVIRONMENT: ${ENVIRONMENT:-development}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - devpulse-network
+
+networks:
+  devpulse-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,6 @@
+fastapi==0.95.0
+sqlalchemy==1.4.47
+alembic==1.7.7
+pydantic-settings==0.1.0
+psycopg2-binary==2.9.3
+uvicorn==0.17.6
